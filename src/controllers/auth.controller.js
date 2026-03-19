@@ -1,0 +1,119 @@
+// src/controllers/auth.controller.js
+// ✅ FIX PERFORMANCE 1 — Utilise 'bcrypt' natif au lieu de 'bcryptjs' pure JS
+//    bcrypt natif (C++ binding) est 3-5x plus rapide que bcryptjs
+//    Pour l'installer : npm install bcrypt
+//    Dans Dockerfile ajouter : apk add --no-cache python3 make g++
+//    (déjà présent si tu as suivi le fix Python)
+//
+// ✅ FIX PERFORMANCE 2 — La vérification username se fait d'abord SANS bcrypt
+//    Si l'utilisateur n'existe pas → réponse immédiate sans bcrypt inutile
+
+const bcrypt            = require('bcrypt'); // ✅ natif, pas bcryptjs
+const db                = require('../config/db');
+const { generateToken } = require('../utils/jwt');
+const { success, error } = require('../utils/response');
+
+// ─── LOGIN ─────────────────────────────────────────────────────────────────
+const login = async (req, res) => {
+  try {
+    const { username, mot_de_passe } = req.body;
+
+    if (!username || !mot_de_passe) {
+      return error(res, "Nom d'utilisateur et mot de passe requis", 400);
+    }
+
+    // ✅ Requête SQL légère — index sur username → très rapide
+    const [rows] = await db.query(
+      `SELECT u.id, u.nom, u.prenom, u.username, u.mot_de_passe,
+              u.matricule, u.badge_ocp_id,
+              u.entite, u.actif, r.nom AS role
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE u.username = ?
+       LIMIT 1`,
+      [username]
+    );
+
+    // ✅ Vérification existence AVANT bcrypt (évite bcrypt inutile)
+    if (!rows.length) {
+      return error(res, "Nom d'utilisateur ou mot de passe incorrect", 401);
+    }
+
+    const user = rows[0];
+
+    if (!user.actif) {
+      return error(res, "Compte désactivé, contactez l'administrateur", 403);
+    }
+
+    // ✅ bcrypt natif (C++) — beaucoup plus rapide que bcryptjs (pure JS)
+    const mdpValide = await bcrypt.compare(mot_de_passe, user.mot_de_passe);
+
+    if (!mdpValide) {
+      return error(res, "Nom d'utilisateur ou mot de passe incorrect", 401);
+    }
+
+    const token = generateToken({ id: user.id, role: user.role });
+
+    // Ne pas retourner le hash du mot de passe
+    const { mot_de_passe: _, ...userSansPassword } = user;
+
+    return success(res, { token, user: userSansPassword }, 'Connexion réussie');
+
+  } catch (err) {
+    console.error('Login error:', err);
+    return error(res, 'Erreur serveur', 500);
+  }
+};
+
+// ─── MOI (profil connecté) ─────────────────────────────────────────────────
+const me = async (req, res) => {
+  try {
+    return success(res, req.user, 'Profil récupéré');
+  } catch (err) {
+    return error(res, 'Erreur serveur', 500);
+  }
+};
+
+// ─── CHANGER MOT DE PASSE ─────────────────────────────────────────────────
+const changerMotDePasse = async (req, res) => {
+  try {
+    const { ancien_mot_de_passe, nouveau_mot_de_passe, confirmation } = req.body;
+    const userId = req.user.id;
+
+    if (!ancien_mot_de_passe || !nouveau_mot_de_passe || !confirmation) {
+      return error(res, 'Tous les champs sont requis', 400);
+    }
+    if (nouveau_mot_de_passe !== confirmation) {
+      return error(res, 'Le nouveau mot de passe et la confirmation ne correspondent pas', 400);
+    }
+    if (nouveau_mot_de_passe.length < 6) {
+      return error(res, 'Le nouveau mot de passe doit contenir au moins 6 caractères', 400);
+    }
+
+    const [rows] = await db.query(
+      'SELECT mot_de_passe FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    );
+
+    if (!rows.length) {
+      return error(res, 'Utilisateur introuvable', 404);
+    }
+
+    const ancienValide = await bcrypt.compare(ancien_mot_de_passe, rows[0].mot_de_passe);
+    if (!ancienValide) {
+      return error(res, 'Ancien mot de passe incorrect', 401);
+    }
+
+    // ✅ cost factor 10 — bon équilibre sécurité/vitesse
+    const hash = await bcrypt.hash(nouveau_mot_de_passe, 10);
+    await db.query('UPDATE users SET mot_de_passe = ? WHERE id = ?', [hash, userId]);
+
+    return success(res, null, 'Mot de passe modifié avec succès');
+
+  } catch (err) {
+    console.error('Change password error:', err);
+    return error(res, 'Erreur serveur', 500);
+  }
+};
+
+module.exports = { login, me, changerMotDePasse };
