@@ -14,7 +14,7 @@ const pool = mysql.createPool({
   database : process.env.DB_NAME,
 
   // ── SSL — activé par défaut (Aiven), désactivé en local avec DB_SSL=false ──
-  ssl      : process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: true },
+  ssl      : process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
 
   // ── Taille du pool ──────────────────────────────────────────────────────
   waitForConnections : true,
