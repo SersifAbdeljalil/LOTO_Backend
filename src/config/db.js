@@ -8,7 +8,7 @@ const caPath = path.join(__dirname, '../../ca.pem');
 const sslConfig = process.env.DB_SSL === 'false'
   ? false
   : {
-      rejectUnauthorized: true,          // ✅ sécurisé
+      rejectUnauthorized: true,
       ca: fs.existsSync(caPath) ? fs.readFileSync(caPath) : undefined,
     };
 
@@ -29,3 +29,22 @@ const pool = mysql.createPool({
   idleTimeout           : 60000,
   multipleStatements    : false,
 });
+
+// ── Test de connexion au démarrage ─────────────────────────────────────────
+pool.getConnection()
+  .then(conn => {
+    console.log('✅ MySQL connecté avec succès');
+    conn.release();
+  })
+  .catch(err => {
+    console.error('❌ Erreur connexion MySQL :', err.message);
+    setTimeout(() => {
+      console.error('❌ MySQL toujours inaccessible — arrêt du serveur');
+      process.exit(1);
+    }, 5000);
+  });
+
+// ✅ FIX — mysql2/promise pool utilise execute() pas query()
+pool.query = pool.execute.bind(pool);
+
+module.exports = pool;
