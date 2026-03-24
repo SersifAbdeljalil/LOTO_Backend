@@ -1,6 +1,6 @@
 // src/controllers/user.controller.js
 // CORRIGE : colonne type_metier supprimee de la BDD
-const bcrypt = require('bcrypt'); // ✅ bcrypt natif, pas bcryptjs
+const bcrypt = require('bcrypt');
 const db     = require('../config/db');
 const { success, error } = require('../utils/response');
 const { genererCode, envoyerSMS, formaterNumero } = require('../services/sms.service');
@@ -223,6 +223,39 @@ const changerMotDePasse = async (req, res) => {
   }
 };
 
+const changerMotDePasseForce = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { nouveau_mot_de_passe, confirmation } = req.body;
+
+    if (!nouveau_mot_de_passe || !confirmation)
+      return error(res, 'Tous les champs sont requis', 400);
+    if (nouveau_mot_de_passe.length < 6)
+      return error(res, 'Le mot de passe doit contenir au moins 6 caractères', 400);
+    if (nouveau_mot_de_passe !== confirmation)
+      return error(res, 'La confirmation ne correspond pas', 400);
+
+    const [rows] = await db.query(
+      'SELECT mot_passe_temp FROM users WHERE id=? AND actif=1',
+      [userId]
+    );
+    if (!rows.length)
+      return error(res, 'Utilisateur introuvable', 404);
+    if (!rows[0].mot_passe_temp)
+      return error(res, "Votre mot de passe n'est pas temporaire", 400);
+
+    const hash = await bcrypt.hash(nouveau_mot_de_passe, 10);
+    await db.query(
+      'UPDATE users SET mot_de_passe=?, mot_passe_temp=0 WHERE id=?',
+      [hash, userId]
+    );
+    return success(res, { mot_passe_temp: false }, 'Mot de passe défini avec succès');
+  } catch (err) {
+    console.error('changerMotDePasseForce error:', err);
+    return error(res, 'Erreur serveur', 500);
+  }
+};
+
 const getRoles = async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM roles ORDER BY id');
@@ -323,6 +356,7 @@ const updateTelephoneAdmin = async (req, res) => {
 module.exports = {
   getUsers, getUserById, createUser, updateUser,
   toggleUserActif, resetMotDePasse, changerMotDePasse,
+  changerMotDePasseForce,
   getRoles, updateTelephone, verifierTelephone,
   getEquipements, updateTelephoneAdmin,
 };

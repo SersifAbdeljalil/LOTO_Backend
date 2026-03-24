@@ -1,4 +1,6 @@
 // src/routes/index.js
+// ✅ Route admin ajoutée
+
 const express = require("express");
 const router  = express.Router();
 
@@ -11,6 +13,7 @@ router.use('/notifications',        require('./notification.routes'));
 router.use('/intervenants',         require('./intervenant.routes'));
 router.use('/charge',               require('./charge.routes'));
 router.use('/process',              require('./process.routes'));
-router.use('/equipe-intervention',  require('./equipeIntervention.routes')); // ✅ Équipes chantier
+router.use('/equipe-intervention',  require('./equipeIntervention.routes'));
+router.use('/admin',                require('./admin.routes')); // ✅ NOUVEAU
 
 module.exports = router;

@@ -1,17 +1,8 @@
 // src/services/pdf.service.js
-// ✅ FIX CRITIQUE genererPDFDeconsignation :
-//    La colonne "Déconsigné par" utilise maintenant les VRAIES données de déconsignation
-//    stockées sur chaque point (pt.decons_par_nom, pt.date_decons) au lieu de
-//    deviner selon typeDeconsignation.
-//
-//    Résultat : quand le 2ème valide, le PDF contient les infos des DEUX
-//    (chargé + process) car les données réelles sont lues depuis la DB.
-//
-//    CHANGEMENT REQUIS dans les controllers :
-//    Passer points avec les champs de déconsignation enrichis :
-//      pt.decons_par_nom  → nom de la personne qui a déconsigné ce point
-//      pt.date_decons     → date de déconsignation de ce point
-//    Ces champs viennent déjà de la query SQL (JOIN deconsignations).
+// ✅ HEURE TÉLÉPHONE : fmtDateNow, fmtHeureNow acceptent deviceTime en paramètre
+//    Les dates "now" dans les PDF utilisent req.deviceTime (heure téléphone).
+//    Fallback automatique sur new Date() si deviceTime absent.
+// ✅ PHOTO SUPPRIMÉE : la section "Photo du départ consigné" a été retirée des deux fonctions.
 
 const path = require('path');
 const fs   = require('fs');
@@ -26,61 +17,82 @@ const getTagImagePath = (codeEquipement) => {
   return fs.existsSync(filePath) ? filePath : null;
 };
 
-const toMarocParts = (dt) => {
-  const parts = new Intl.DateTimeFormat('fr-FR', {
-    timeZone: 'Africa/Casablanca',
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  }).formatToParts(dt);
-  const get = (type) => parts.find(p => p.type === type)?.value || '00';
-  return { day: get('day'), month: get('month'), year: get('year'), hours: get('hour'), minutes: get('minute'), seconds: get('second') };
+// ════════════════════════════════════════════════════════════════
+// HELPERS HEURE MAROC
+// ════════════════════════════════════════════════════════════════
+
+const parseUTC = (d) => {
+  if (!d) return null;
+  if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+  let s = String(d).trim().replace(' ', 'T');
+  // Strings MySQL "YYYY-MM-DDTHH:MM:SS" → toujours UTC
+  if (!s.endsWith('Z') && !s.includes('+') && !s.match(/-\d{2}:\d{2}$/)) {
+    s = s + 'Z';
+  }
+  const dt = new Date(s);
+  return isNaN(dt.getTime()) ? null : dt;
 };
 
 const fmtDate = (d) => {
-  if (!d) return '';
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return '';
-  return `${String(dt.getUTCDate()).padStart(2,'0')}/${String(dt.getUTCMonth()+1).padStart(2,'0')}/${dt.getUTCFullYear()}`;
+  const dt = parseUTC(d);
+  if (!dt) return '';
+  const parts = new Intl.DateTimeFormat('fr-MA', {
+    timeZone: 'Africa/Casablanca',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+  }).formatToParts(dt);
+  const get = (type) => parts.find(p => p.type === type)?.value || '00';
+  return `${get('day')}/${get('month')}/${get('year')}`;
 };
 
 const fmtHeure = (d) => {
-  if (!d) return '';
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return '';
-  return `${String(dt.getUTCHours()).padStart(2,'0')}:${String(dt.getUTCMinutes()).padStart(2,'0')}`;
+  const dt = parseUTC(d);
+  if (!dt) return '';
+  const parts = new Intl.DateTimeFormat('fr-MA', {
+    timeZone: 'Africa/Casablanca',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(dt);
+  const get = (type) => parts.find(p => p.type === type)?.value || '00';
+  return `${get('hour')}:${get('minute')}`;
 };
 
-const fmtDateNow  = () => { const p = toMarocParts(new Date()); return `${p.day}/${p.month}/${p.year}`; };
-const fmtHeureNow = () => { const p = toMarocParts(new Date()); return `${p.hours}:${p.minutes}:${p.seconds}`; };
+// ✅ FIX : fmtDateNow / fmtHeureNow acceptent deviceTime en paramètre
+//    → utilisent Africa/Casablanca via fmtDate/fmtHeure (Ramadan-safe)
+const fmtDateNow = (deviceTime) => {
+  return fmtDate(deviceTime || new Date());
+};
+
+const fmtHeureNow = (deviceTime) => {
+  return fmtHeure(deviceTime || new Date());
+};
 
 // ── Dimensions colonnes communes aux deux fonctions ──────────────
-const buildColumns = () => {
-  const C = {
-    num:    12,
-    repere: 50,
-    local:  48,
-    disp:   48,
-    etat:   26,
-    charge: 34,
-    cad:    40,
-    cNom:   46,
-    cDate:  32,
-    cHeure: 22,
-    vNom:   40,
-    vDate:  30,
-    dNom:   46,
-    dDate:  61,
-  };
-  return C;
-};
+const buildColumns = () => ({
+  num:    12,
+  repere: 50,
+  local:  48,
+  disp:   48,
+  etat:   26,
+  charge: 34,
+  cad:    40,
+  cNom:   46,
+  cDate:  32,
+  cHeure: 22,
+  vNom:   40,
+  vDate:  30,
+  dNom:   46,
+  dDate:  61,
+});
 
 // ═══════════════════════════════════════════════════════════════════
-// genererPDFUnifie — inchangé
+// genererPDFUnifie
+// ✅ deviceTime passé en paramètre → fmtDateNow(deviceTime)
+// ✅ Section "Photo du départ consigné" supprimée
 // ═══════════════════════════════════════════════════════════════════
 const genererPDFUnifie = ({
   demande, plan, points,
   chargeInfo, processInfo,
   pdfPath, photoAbsPath,
+  deviceTime,
 }) => {
   return new Promise((resolve, reject) => {
     const tagImagePath = getTagImagePath(demande.tag);
@@ -118,7 +130,8 @@ const genererPDFUnifie = ({
     doc.fontSize(7.5).font('Helvetica-Oblique').fillColor('#000').text('Entité : ', ML, y, { continued: true }).font('Helvetica').text(demande.lot_code || '');
     y += 12;
     doc.fontSize(7).font('Helvetica').fillColor('#000').text("N° d'ordre : ", ML, y, { continued: true }).font('Helvetica-Bold').text(demande.numero_ordre || '');
-    doc.fontSize(7).font('Helvetica-Bold').fillColor('#000').text('Date : ', ML + 270, y, { continued: true }).font('Helvetica').text(fmtDateNow());
+    // ✅ Date heure téléphone
+    doc.fontSize(7).font('Helvetica-Bold').fillColor('#000').text('Date : ', ML + 270, y, { continued: true }).font('Helvetica').text(fmtDateNow(deviceTime));
     y += 11;
     doc.fontSize(7).font('Helvetica').fillColor('#000').text('Equipement concerné : ', ML, y, { continued: true }).font('Helvetica-Bold').text(`${demande.equipement_nom || ''} (${demande.tag || ''})`);
     doc.moveTo(ML + 210, y + 9).lineTo(ML + PW, y + 9).stroke('#aaa');
@@ -184,7 +197,8 @@ const genererPDFUnifie = ({
 
     const chargeNom  = chargeInfo  ? `${chargeInfo.prenom} ${chargeInfo.nom}`   : '';
     const processNom = processInfo ? `${processInfo.prenom} ${processInfo.nom}` : '';
-    const dateValid  = fmtDateNow();
+    // ✅ dateValid = heure téléphone
+    const dateValid  = fmtDateNow(deviceTime);
 
     const cellP = (txt, cx, cw, bg, stroke) => {
       if (bg) doc.rect(cx, y, cw, ROW_DATA).fillAndStroke(bg, stroke || '#000');
@@ -219,12 +233,14 @@ const genererPDFUnifie = ({
         cellP(pt.dispositif_condamnation || '', dx, C.disp); dx += C.disp;
         cellP(pt.etat_requis || '',       dx, C.etat);   dx += C.etat;
         cellP(chargeLabel,                dx, C.charge); dx += C.charge;
-        cellP(aEteConsigne ? pt.numero_cadenas : '', dx, C.cad);   dx += C.cad;
-        cellP(aEteConsigne ? executantNom : '',      dx, C.cNom);  dx += C.cNom;
-        cellP(aEteConsigne ? fmtDate(pt.date_consigne) : '',  dx, C.cDate);  dx += C.cDate;
+        cellP(aEteConsigne ? pt.numero_cadenas : '',          dx, C.cad);   dx += C.cad;
+        cellP(aEteConsigne ? executantNom : '',               dx, C.cNom);  dx += C.cNom;
+        // ✅ fmtDate / fmtHeure → heure Maroc
+        // ✅ fmtDate / fmtHeure → heure Maroc (Africa/Casablanca)
+        cellP(aEteConsigne ? fmtDate(pt.date_consigne)  : '', dx, C.cDate);  dx += C.cDate;
         cellP(aEteConsigne ? fmtHeure(pt.date_consigne) : '', dx, C.cHeure); dx += C.cHeure;
-        cellP(aEteConsigne ? verificateurNom : '', dx, C.vNom);  dx += C.vNom;
-        cellP(aEteConsigne ? dateValid : '',       dx, C.vDate); dx += C.vDate;
+        cellP(aEteConsigne ? verificateurNom : '',            dx, C.vNom);  dx += C.vNom;
+        cellP(aEteConsigne ? dateValid : '',                  dx, C.vDate); dx += C.vDate;
         cellP('', dx, C.dNom);  dx += C.dNom;
         cellP('', dx, C.dDate);
       } else {
@@ -235,14 +251,15 @@ const genererPDFUnifie = ({
       y += ROW_DATA;
     });
 
+    // ✅ Plan établi/approuvé : toujours vides (jamais de nom ni date auto)
     const basH = 38, basW = PW / 2;
     doc.rect(ML, y, basW, basH).stroke('#000');
     doc.fontSize(6.5).font('Helvetica-Bold').fillColor('#000').text('Plan établi par :', ML + 4, y + 3);
-    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + 4, y + 20, { continued: true }).font('Helvetica').text(chargeInfo ? dateValid : '');
+    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + 4, y + 20);
     doc.fontSize(6).font('Helvetica-Bold').text('Signature :', ML + 4, y + 29);
     doc.rect(ML + basW, y, basW, basH).stroke('#000');
     doc.fontSize(6.5).font('Helvetica-Bold').fillColor('#000').text('Plan approuvé par :', ML + basW + 4, y + 3);
-    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + basW + 4, y + 20, { continued: true }).font('Helvetica').text(processInfo ? dateValid : '');
+    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + basW + 4, y + 20);
     doc.fontSize(6).font('Helvetica-Bold').text('Signature :', ML + basW + 4, y + 29);
     y += basH + 5;
 
@@ -262,21 +279,7 @@ const genererPDFUnifie = ({
     if (tagImagePath) {
       try { doc.image(tagImagePath, ML + 2, y + 2, { width: PW - 4, height: schemaH - 4, fit: [PW - 4, schemaH - 4], align: 'center', valign: 'center' }); } catch (e) {}
     }
-    y += schemaH + 4;
-
-    y += 5;
-    doc.rect(ML, y, PW, 12).fillAndStroke(BLEU_PLAN, BLEU_PLAN);
-    doc.fontSize(7).font('Helvetica-Bold').fillColor(BLANC).text('Photo du départ consigné', ML, y + 2, { width: PW, align: 'center' });
-    y += 14;
-    const photoH = 150;
-    doc.rect(ML, y, PW, photoH).stroke('#000');
-    if (photoAbsPath && fs.existsSync(photoAbsPath)) {
-      try { doc.image(photoAbsPath, ML + 2, y + 2, { width: PW - 4, height: photoH - 4, fit: [PW - 4, photoH - 4], align: 'center', valign: 'center' }); } catch (e) {}
-      y += photoH + 3;
-      doc.fontSize(6).font('Helvetica').fillColor('#555').text(`Photo prise le ${fmtDateNow()} à ${fmtHeureNow()}`, ML, y, { width: PW, align: 'center' });
-    } else {
-      doc.fontSize(8).font('Helvetica').fillColor('#BDBDBD').text('Photo à prendre lors de la consignation sur terrain', ML, y + photoH / 2 - 5, { width: PW, align: 'center' });
-    }
+    // ✅ Section "Photo du départ consigné" SUPPRIMÉE
 
     doc.end();
     stream.on('finish', resolve);
@@ -285,27 +288,16 @@ const genererPDFUnifie = ({
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// genererPDFDeconsignation — CORRIGÉ
-//
-// ✅ FIX CRITIQUE : La colonne "Déconsigné par" est remplie point par point
-//    en utilisant les VRAIES données stockées sur chaque point :
-//      pt.decons_par_nom  → qui a déconsigné ce point (depuis table deconsignations)
-//      pt.date_decons     → quand ce point a été déconsigné
-//
-//    Ainsi quand le 2ème valide et génère le PDF final :
-//      - Les points électriques affichent le nom du CHARGÉ (déjà déconsigné)
-//      - Les points process affichent le nom du PROCESS (vient de déconsigner)
-//      - Rien n'est écrasé, tout est visible dans le même PDF
-//
-//    IMPORTANT : Les controllers doivent passer les points ENRICHIS avec :
-//      pt.decons_par_nom et pt.date_decons (JOIN avec table deconsignations)
-//    → Ces champs sont déjà présents dans les queries SQL existantes ✅
+// genererPDFDeconsignation
+// ✅ deviceTime passé en paramètre → fmtDateNow(deviceTime)
+// ✅ Section "Photo du départ consigné" supprimée
 // ═══════════════════════════════════════════════════════════════════
 const genererPDFDeconsignation = ({
   demande, plan, points,
   chargeInfo, processInfo,
   pdfPath, photoAbsPath,
   typeDeconsignation = 'charge',
+  deviceTime,
 }) => {
   return new Promise((resolve, reject) => {
     const tagImagePath = getTagImagePath(demande.tag);
@@ -314,11 +306,10 @@ const genererPDFDeconsignation = ({
     doc.pipe(stream);
 
     const ML = 30, PW = 535;
-    const BLEU_HEADER = '#003087', BLEU_PLAN = '#5B9BD5', BLEU_PLAN_CLR = '#D6E4F3';
-    const BLANC       = '#FFFFFF';
-    // Couleurs fond pour la colonne déconsignation
-    const VERT_DECONS  = '#E8F5E9';  // vert clair → point électrique déconsigné (chargé)
-    const AMBRE_DECONS = '#FFF8E1';  // ambre clair → point process déconsigné
+    const BLEU_HEADER  = '#003087', BLEU_PLAN = '#5B9BD5', BLEU_PLAN_CLR = '#D6E4F3';
+    const BLANC        = '#FFFFFF';
+    const VERT_DECONS  = '#E8F5E9';
+    const AMBRE_DECONS = '#FFF8E1';
 
     const hdrH = 60;
     doc.rect(ML, 30, 75, hdrH).stroke('#000');
@@ -346,7 +337,8 @@ const genererPDFDeconsignation = ({
     doc.fontSize(7.5).font('Helvetica-Oblique').fillColor('#000').text('Entité : ', ML, y, { continued: true }).font('Helvetica').text(demande.lot_code || '');
     y += 12;
     doc.fontSize(7).font('Helvetica').fillColor('#000').text("N° d'ordre : ", ML, y, { continued: true }).font('Helvetica-Bold').text(demande.numero_ordre || '');
-    doc.fontSize(7).font('Helvetica-Bold').fillColor('#000').text('Date : ', ML + 270, y, { continued: true }).font('Helvetica').text(fmtDateNow());
+    // ✅ heure téléphone
+    doc.fontSize(7).font('Helvetica-Bold').fillColor('#000').text('Date : ', ML + 270, y, { continued: true }).font('Helvetica').text(fmtDateNow(deviceTime));
     y += 11;
     doc.fontSize(7).font('Helvetica').fillColor('#000').text('Equipement concerné : ', ML, y, { continued: true }).font('Helvetica-Bold').text(`${demande.equipement_nom || ''} (${demande.tag || ''})`);
     doc.moveTo(ML + 210, y + 9).lineTo(ML + PW, y + 9).stroke('#aaa');
@@ -410,10 +402,10 @@ const genererPDFDeconsignation = ({
     subE('Date',      sx, sy, C.dDate);
     y += ROW_H2;
 
-    // ── Noms des intervenants ────────────────────────────────────
     const chargeNom  = chargeInfo  ? `${chargeInfo.prenom} ${chargeInfo.nom}`   : '';
     const processNom = processInfo ? `${processInfo.prenom} ${processInfo.nom}` : '';
-    const dateValid  = fmtDateNow();
+    // ✅ dateValid = heure téléphone
+    const dateValid  = fmtDateNow(deviceTime);
 
     const cellP = (txt, cx, cw, bgColor) => {
       if (bgColor) doc.rect(cx, y, cw, ROW_DATA).fillAndStroke(bgColor, '#000');
@@ -423,17 +415,13 @@ const genererPDFDeconsignation = ({
       );
     };
 
-    // ✅ FIX : on affiche les 9 premiers points du plan complet (elec + process mélangés)
-    // Les points sont triés par numero_ligne donc l'ordre est cohérent
     const ORDERED = Array.from({ length: 9 }, (_, i) => points[i] || null);
 
     ORDERED.forEach((pt, i) => {
       const isProcess = pt && pt.charge_type === 'process';
       const isElec    = pt && (pt.charge_type === 'electricien' || !pt.charge_type);
-
-      // Fond de ligne plan
-      const bgPlan = i % 2 === 0 ? BLEU_PLAN : BLEU_PLAN_CLR;
-      const bgExec = i % 2 === 0 ? BLANC : '#F5F9FF';
+      const bgPlan    = i % 2 === 0 ? BLEU_PLAN : BLEU_PLAN_CLR;
+      const bgExec    = i % 2 === 0 ? BLANC : '#F5F9FF';
 
       doc.rect(ML, y, planW, ROW_DATA).fillAndStroke(bgPlan, '#000');
       doc.rect(ML + planW, y, execW, ROW_DATA).fillAndStroke(bgExec, '#000');
@@ -445,51 +433,36 @@ const genererPDFDeconsignation = ({
         const executantNom    = pt.consigne_par_nom || (isProcess ? processNom : chargeNom);
         const verificateurNom = isProcess ? processNom : chargeNom;
 
-        // ✅ FIX CRITIQUE : lire les vraies données de déconsignation depuis le point
-        // pt.decons_par_nom et pt.date_decons viennent du JOIN avec table deconsignations
-        // dans les queries SQL des controllers (getDemandeDeconsignationDetail)
-        const aEteDeconsigne  = !!pt.decons_par_nom || !!pt.date_decons;
-
-        // ✅ Nom du déconsigneur : priorité aux vraies données DB
-        // Fallback : si pas encore en DB → utiliser le nom de l'intervenant courant
-        //   (cas du 1er validateur dont les données viennent d'être insérées)
+        // ✅ FIX CRITIQUE : vraies données DB en priorité
         let deconNom  = '';
         let deconDate = '';
 
         if (pt.decons_par_nom) {
-          // Donnée réelle depuis la table deconsignations → TOUJOURS prioritaire
           deconNom  = pt.decons_par_nom;
           deconDate = pt.date_decons ? fmtDate(pt.date_decons) : dateValid;
         } else if (isElec && typeDeconsignation === 'charge' && chargeNom) {
-          // Ce point électrique vient d'être déconsigné par le chargé (1er validateur)
-          // Les données DB ne sont pas encore dans pt (query faite avant l'INSERT)
           deconNom  = chargeNom;
           deconDate = dateValid;
         } else if (isProcess && typeDeconsignation === 'process' && processNom) {
-          // Ce point process vient d'être déconsigné par le process (1er validateur)
           deconNom  = processNom;
           deconDate = dateValid;
         }
 
-        // Fond coloré si ce point est déconsigné
-        const bgDecons = aEteDeconsigne || deconNom
-          ? (isProcess ? AMBRE_DECONS : VERT_DECONS)
-          : null;
+        const bgDecons = deconNom ? (isProcess ? AMBRE_DECONS : VERT_DECONS) : null;
 
-        cellP(pt.numero_ligne,                            dx, C.num);                              dx += C.num;
-        cellP(pt.repere_point || '',                       dx, C.repere);                           dx += C.repere;
-        cellP(pt.mcc_ref || pt.localisation || '',         dx, C.local);                            dx += C.local;
-        cellP(pt.dispositif_condamnation || '',             dx, C.disp);                             dx += C.disp;
-        cellP(pt.etat_requis || '',                        dx, C.etat);                             dx += C.etat;
-        cellP(chargeLabel,                                 dx, C.charge);                           dx += C.charge;
-        cellP(aEteConsigne ? pt.numero_cadenas : '',       dx, C.cad);                              dx += C.cad;
-        cellP(aEteConsigne ? executantNom : '',             dx, C.cNom);                             dx += C.cNom;
-        cellP(aEteConsigne ? fmtDate(pt.date_consigne) : '', dx, C.cDate);                          dx += C.cDate;
-        cellP(aEteConsigne ? fmtHeure(pt.date_consigne) : '', dx, C.cHeure);                        dx += C.cHeure;
-        cellP(aEteConsigne ? verificateurNom : '',          dx, C.vNom);                             dx += C.vNom;
-        cellP(aEteConsigne ? fmtDate(pt.date_consigne) : '', dx, C.vDate);                          dx += C.vDate;
-        // ✅ Colonne "Déconsigné par" — données réelles ou fallback 1er validateur
-        cellP(deconNom,  dx, C.dNom, deconNom ? bgDecons : null); dx += C.dNom;
+        cellP(pt.numero_ligne,                              dx, C.num);    dx += C.num;
+        cellP(pt.repere_point || '',                        dx, C.repere); dx += C.repere;
+        cellP(pt.mcc_ref || pt.localisation || '',          dx, C.local);  dx += C.local;
+        cellP(pt.dispositif_condamnation || '',             dx, C.disp);   dx += C.disp;
+        cellP(pt.etat_requis || '',                         dx, C.etat);   dx += C.etat;
+        cellP(chargeLabel,                                  dx, C.charge); dx += C.charge;
+        cellP(aEteConsigne ? pt.numero_cadenas : '',        dx, C.cad);    dx += C.cad;
+        cellP(aEteConsigne ? executantNom : '',             dx, C.cNom);   dx += C.cNom;
+        cellP(aEteConsigne ? fmtDate(pt.date_consigne)  : '', dx, C.cDate);  dx += C.cDate;
+        cellP(aEteConsigne ? fmtHeure(pt.date_consigne) : '', dx, C.cHeure); dx += C.cHeure;
+        cellP(aEteConsigne ? verificateurNom : '',          dx, C.vNom);   dx += C.vNom;
+        cellP(aEteConsigne ? fmtDate(pt.date_consigne)  : '', dx, C.vDate); dx += C.vDate;
+        cellP(deconNom,  dx, C.dNom,  deconNom  ? bgDecons : null); dx += C.dNom;
         cellP(deconDate, dx, C.dDate, deconDate ? bgDecons : null);
       } else {
         [C.num, C.repere, C.local, C.disp, C.etat, C.charge,
@@ -499,23 +472,16 @@ const genererPDFDeconsignation = ({
       y += ROW_DATA;
     });
 
-    // ── Signatures ───────────────────────────────────────────────
+    // ✅ Signatures standard — toujours vides (même structure que consignation)
     const basH = 38, basW = PW / 2;
     doc.rect(ML, y, basW, basH).stroke('#000');
-    doc.fontSize(6.5).font('Helvetica-Bold').fillColor('#000').text('Déconsigné par (électrique) :', ML + 4, y + 3);
-    doc.fontSize(6).font('Helvetica-Bold').text('Nom : ', ML + 4, y + 14, { continued: true }).font('Helvetica').text(chargeNom || '—');
-    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + 4, y + 23, { continued: true }).font('Helvetica').text(
-      chargeNom ? dateValid : '—'
-    );
-    doc.fontSize(6).font('Helvetica-Bold').text('Signature :', ML + 4, y + 30);
-
+    doc.fontSize(6.5).font('Helvetica-Bold').fillColor('#000').text('Plan établi par :', ML + 4, y + 3);
+    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + 4, y + 20);
+    doc.fontSize(6).font('Helvetica-Bold').text('Signature :', ML + 4, y + 29);
     doc.rect(ML + basW, y, basW, basH).stroke('#000');
-    doc.fontSize(6.5).font('Helvetica-Bold').fillColor('#000').text('Déconsigné par (process) :', ML + basW + 4, y + 3);
-    doc.fontSize(6).font('Helvetica-Bold').text('Nom : ', ML + basW + 4, y + 14, { continued: true }).font('Helvetica').text(processNom || '—');
-    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + basW + 4, y + 23, { continued: true }).font('Helvetica').text(
-      processNom ? dateValid : '—'
-    );
-    doc.fontSize(6).font('Helvetica-Bold').text('Signature :', ML + basW + 4, y + 30);
+    doc.fontSize(6.5).font('Helvetica-Bold').fillColor('#000').text('Plan approuvé par :', ML + basW + 4, y + 3);
+    doc.fontSize(6).font('Helvetica-Bold').text('Date : ', ML + basW + 4, y + 20);
+    doc.fontSize(6).font('Helvetica-Bold').text('Signature :', ML + basW + 4, y + 29);
     y += basH + 5;
 
     doc.fontSize(6.5).font('Helvetica').fillColor('#000').text('Remarques : ', ML, y, { continued: true });
@@ -534,7 +500,7 @@ const genererPDFDeconsignation = ({
     if (tagImagePath) {
       try { doc.image(tagImagePath, ML + 2, y + 2, { width: PW - 4, height: schemaH - 4, fit: [PW - 4, schemaH - 4], align: 'center', valign: 'center' }); } catch (e) {}
     }
-    y += schemaH + 4;
+    // ✅ Section "Photo du départ consigné" SUPPRIMÉE
 
     doc.end();
     stream.on('finish', resolve);

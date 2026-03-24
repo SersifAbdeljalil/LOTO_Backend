@@ -13,7 +13,7 @@ const {
   getEquipe,
   getIntervenantsDispos,
   enregistrerMembre,
-  supprimerMembre,           // ← FIX : était absent
+  supprimerMembre,
   verifierCadenas,
   mettreAJourCadenas,
   validerEquipe,
@@ -25,6 +25,7 @@ const {
   validerDeconsignation,
   getRapport,
   getStatutDeconsignation,
+  servirRapportPDF,   // ✅ NOUVEAU
 } = require('../controllers/equipeIntervention.controller');
 
 // ── Multer — upload photo membre ──────────────────────────────────
@@ -56,6 +57,7 @@ router.use(auth);
 router.get('/mes-membres',                         getMesMembres);
 router.get('/:demande_id/statut-deconsignation',   getStatutDeconsignation);
 router.get('/:demande_id/intervenants-dispos',     getIntervenantsDispos);
+router.get('/:demande_id/rapport-pdf',             servirRapportPDF);   // ✅ NOUVEAU — avant /rapport et /:demande_id
 router.get('/:demande_id/rapport',                 getRapport);
 router.get('/:demande_id',                         getEquipe);
 
@@ -67,7 +69,6 @@ router.post('/membre/verifier-cadenas',            verifierCadenas);
 router.post('/membre',                             upload.single('photo'), enregistrerMembre);
 
 // ── Suppression membre ────────────────────────────────────────────
-// FIX : route DELETE manquante — causait l'erreur lors du "Retirer"
 router.delete('/membre/:id',                       supprimerMembre);
 
 // ── Validation équipe + entrée site ──────────────────────────────
