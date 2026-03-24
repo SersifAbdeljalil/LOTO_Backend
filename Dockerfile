@@ -27,8 +27,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # ✅ npm install au lieu de npm ci → pas de problème de lock file
-RUN npm install --omit=dev
-
+RUN npm cache clean --force && npm install --omit=dev
 COPY . .
 
 EXPOSE 3000
