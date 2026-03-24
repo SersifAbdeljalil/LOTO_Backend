@@ -26,11 +26,12 @@ WORKDIR /app
 
 COPY package*.json ./
 
-# ✅ npm install au lieu de npm ci → pas de problème de lock file
+# ✅ ARG pour invalider le cache Docker à chaque build
+ARG CACHEBUST=1
 RUN npm cache clean --force && npm install --omit=dev
+
 COPY . .
 
 EXPOSE 3000
 
-# ✅ Production : node (pas nodemon)
 CMD ["node", "server.js"]
