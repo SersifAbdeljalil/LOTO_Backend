@@ -29,12 +29,9 @@ COPY package*.json ./
 # ✅ npm install au lieu de npm ci → pas de problème de lock file
 RUN npm install --omit=dev
 
-# ✅ nodemon pour hot reload
-RUN npm install -g nodemon
-
 COPY . .
 
 EXPOSE 3000
 
-# ✅ nodemon surveille les changements → redémarre automatiquement
-CMD ["nodemon", "server.js"]
+# ✅ Production : node (pas nodemon)
+CMD ["node", "server.js"]

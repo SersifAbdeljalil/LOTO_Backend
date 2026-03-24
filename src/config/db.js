@@ -1,10 +1,7 @@
 // src/config/db.js
-// ✅ FIX PERFORMANCE — Pool MySQL optimisé pour Docker
-//    - keepAlive : évite que les connexions inactives soient coupées par MySQL
-//    - connectTimeout : timeout de connexion explicite
-//    - idleTimeout : libère les connexions inactives proprement
-//    - enableKeepAlive : maintient les connexions TCP actives
-//    - namedPlaceholders : permet les requêtes avec :param au lieu de ?
+// ✅ Compatible LOCAL (Docker) + PRODUCTION (Aiven MySQL)
+// ✅ SSL conditionnel : activé par défaut, désactivé si DB_SSL=false
+// ✅ TIMEZONE +00:00 : pas de double conversion (comme l'original)
 
 const mysql  = require('mysql2/promise');
 require('dotenv').config();
@@ -16,28 +13,25 @@ const pool = mysql.createPool({
   password : process.env.DB_PASSWORD,
   database : process.env.DB_NAME,
 
+  // ── SSL — activé par défaut (Aiven), désactivé en local avec DB_SSL=false ──
+  ssl      : process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: true },
+
   // ── Taille du pool ──────────────────────────────────────────────────────
   waitForConnections : true,
-  connectionLimit    : 10,   // Max 10 connexions simultanées
-  queueLimit         : 0,    // File d'attente illimitée
+  connectionLimit    : 10,
+  queueLimit         : 0,
 
-  // ── Timezone Maroc ──────────────────────────────────────────────────────
-  timezone : '+01:00',
+  // ✅ FIX TIMEZONE — '+00:00' = pas de conversion par le driver
+  //    Les dates MySQL (DATETIME UTC) sont retournées telles quelles
+  //    La conversion UTC→Maroc est faite côté applicatif (pdf.service.js)
+  timezone : '+00:00',
 
-  // ✅ FIX PERFORMANCE — Maintenir les connexions actives (évite reconnexion)
-  // Sans ça, MySQL coupe les connexions inactives après wait_timeout (8h)
-  // et la prochaine requête doit se reconnecter → délai perceptible
-  enableKeepAlive    : true,
-  keepAliveInitialDelay : 10000, // Envoyer un keepAlive après 10s d'inactivité
-
-  // ✅ Timeout de connexion (pas de requête) : 10 secondes
-  connectTimeout : 10000,
-
-  // ✅ Libérer les connexions inactives après 60s (évite les connexions zombies)
-  idleTimeout : 60000,
-
-  // ✅ Permettre plusieurs statements SQL dans une requête (si besoin transactions)
-  multipleStatements : false,
+  // ✅ FIX PERFORMANCE — Maintenir les connexions actives
+  enableKeepAlive       : true,
+  keepAliveInitialDelay : 10000,
+  connectTimeout        : 10000,
+  idleTimeout           : 60000,
+  multipleStatements    : false,
 });
 
 // ── Test de connexion au démarrage ─────────────────────────────────────────
@@ -48,8 +42,6 @@ pool.getConnection()
   })
   .catch(err => {
     console.error('❌ Erreur connexion MySQL :', err.message);
-    // ✅ Ne pas process.exit() directement — laisser Docker restart gérer ça
-    // Si la DB n'est pas encore prête (race condition au démarrage), retry automatique
     setTimeout(() => {
       console.error('❌ MySQL toujours inaccessible — arrêt du serveur');
       process.exit(1);
