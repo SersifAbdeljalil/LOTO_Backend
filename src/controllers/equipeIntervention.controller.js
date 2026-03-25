@@ -1,5 +1,6 @@
 // src/controllers/equipeIntervention.controller.js
 // ✅ HEURE TÉLÉPHONE : tous les NOW() remplacés par devTime(req)
+// ✅ FIX mysql2 : IN (?) → passer [[ids]] au lieu de [ids]
 'use strict';
 
 const path = require('path');
@@ -233,7 +234,7 @@ const validerEquipe = async (req, res) => {
   } catch (err) { console.error('validerEquipe error:', err); return error(res,'Erreur serveur',500); }
 };
 
-// ✅ heure_entree + heure_scan_cadenas = heure téléphone
+// ✅ FIX mysql2 : [[ids]] pour IN(?) — évite l'erreur "Truncated incorrect INTEGER value: '[1]'"
 const marquerEntreeMembres = async (req, res) => {
   try {
     const { demande_id } = req.params;
@@ -255,16 +256,30 @@ const marquerEntreeMembres = async (req, res) => {
         if (r[0].cad_id && r[0].cad_id.trim().toLowerCase() !== scan_cadenas_entree.trim().toLowerCase())
           return error(res,`Cadenas scanné incorrect pour ${r[0].nom}`,400);
       }
-      const [r] = await db.query(`SELECT id FROM equipe_intervention WHERE demande_id=? AND chef_equipe_id=? AND id IN (?) AND statut='en_attente'`,[demande_id, chef_id, membres_ids]);
+      // ✅ FIX : [[membres_ids]] pour que mysql2 développe correctement IN(?)
+      const [r] = await db.query(
+        `SELECT id FROM equipe_intervention WHERE demande_id=? AND chef_equipe_id=? AND id IN (?) AND statut='en_attente'`,
+        [demande_id, chef_id, [membres_ids]]
+      );
       ids = r.map(m => m.id);
     } else {
       return error(res,'Fournissez membres_ids ou tous: true',400);
     }
     if (!ids.length) return error(res,'Aucun membre en attente',400);
-    // ✅ heure téléphone
     const dt = devTime(req);
-    await db.query(`UPDATE equipe_intervention SET statut='sur_site', heure_entree=?, heure_scan_cadenas=? WHERE id IN (?)`,[dt, dt, ids]);
-    const [membresMaj] = await db.query(`SELECT ei.id, ei.demande_id, ei.chef_equipe_id, ei.nom, ei.matricule, ei.badge_ocp_id, ei.numero_cadenas, ei.cad_id, ei.photo_path, ei.statut, ei.equipe_validee, ei.scan_cadenas_sortie, ${MEMBRE_UTC_COLS} FROM equipe_intervention ei WHERE ei.id IN (?)`,[ids]);
+    // ✅ FIX : [[ids]] pour que mysql2 développe correctement IN(?)
+    await db.query(
+      `UPDATE equipe_intervention SET statut='sur_site', heure_entree=?, heure_scan_cadenas=? WHERE id IN (?)`,
+      [dt, dt, [ids]]
+    );
+    // ✅ FIX : [[ids]] pour que mysql2 développe correctement IN(?)
+    const [membresMaj] = await db.query(
+      `SELECT ei.id, ei.demande_id, ei.chef_equipe_id, ei.nom, ei.matricule,
+              ei.badge_ocp_id, ei.numero_cadenas, ei.cad_id, ei.photo_path,
+              ei.statut, ei.equipe_validee, ei.scan_cadenas_sortie, ${MEMBRE_UTC_COLS}
+       FROM equipe_intervention ei WHERE ei.id IN (?)`,
+      [[ids]]
+    );
     const [chefInfo] = await db.query('SELECT prenom, nom, type_metier FROM users WHERE id=?',[chef_id]);
     const chef = chefInfo[0];
     const metierLabel = METIER_LABELS[chef.type_metier] || chef.type_metier;
@@ -282,7 +297,7 @@ const marquerEntree = async (req, res) => {
     if (!rows.length) return error(res,'Membre introuvable',404);
     if (rows[0].chef_equipe_id !== req.user.id) return error(res,'Non autorisé',403);
     if (rows[0].heure_entree) return error(res,'Entrée déjà enregistrée',400);
-    const dt = devTime(req); // ✅ heure téléphone
+    const dt = devTime(req);
     await db.query("UPDATE equipe_intervention SET heure_entree=?, heure_scan_cadenas=?, statut='sur_site' WHERE id=?",[dt, dt, id]);
     return success(res, null, "Heure d'entrée enregistrée");
   } catch (err) { return error(res,'Erreur serveur',500); }
@@ -297,7 +312,7 @@ const marquerSortie = async (req, res) => {
     if (rows[0].chef_equipe_id !== req.user.id) return error(res,'Non autorisé',403);
     if (!rows[0].heure_entree) return error(res,"Entrée pas encore enregistrée",400);
     if (rows[0].heure_sortie) return error(res,'Sortie déjà enregistrée',400);
-    const dt = devTime(req); // ✅ heure téléphone
+    const dt = devTime(req);
     await db.query("UPDATE equipe_intervention SET heure_sortie=?, statut='sortie' WHERE id=?",[dt, id]);
     return success(res, null, 'Heure de sortie enregistrée');
   } catch (err) { return error(res,'Erreur serveur',500); }
@@ -338,7 +353,6 @@ const deconsignerMembre = async (req, res) => {
     if (badge_ocp_id && membre.badge_ocp_id) {
       if (membre.badge_ocp_id.trim().toLowerCase() !== badge_ocp_id.trim().toLowerCase()) return error(res,`Badge incorrect pour ${membre.nom}`,400);
     }
-    // ✅ heure téléphone
     const dt = devTime(req);
     await db.query(`UPDATE equipe_intervention SET heure_sortie=?, heure_scan_sortie=?, scan_cadenas_sortie=?, statut='sortie' WHERE id=?`,[dt, dt, scanFourni, id]);
     const [membresMaj] = await db.query(`SELECT ei.id, ei.demande_id, ei.chef_equipe_id, ei.nom, ei.matricule, ei.badge_ocp_id, ei.numero_cadenas, ei.cad_id, ei.photo_path, ei.statut, ei.equipe_validee, ei.scan_cadenas_sortie, ${MEMBRE_UTC_COLS} FROM equipe_intervention ei WHERE ei.id=?`,[id]);
@@ -366,7 +380,7 @@ const validerDeconsignation = async (req, res) => {
   try {
     const { demande_id } = req.params;
     const chef_id = req.user.id;
-    const dt = devTime(req); // ✅ heure téléphone
+    const dt = devTime(req);
 
     const [demandes] = await db.query(`SELECT d.*, e.code_equipement AS tag, e.nom AS equipement_nom, l.code AS lot_code FROM demandes_consignation d JOIN equipements e ON d.equipement_id=e.id LEFT JOIN lots l ON d.lot_id=l.id WHERE d.id=?`,[demande_id]);
     if (!demandes.length) return error(res,'Demande introuvable',404);
@@ -430,7 +444,6 @@ const validerDeconsignation = async (req, res) => {
         [demande_id, chef_id, pdfRelPath, membres.length, membres.filter(m=>m.statut==='sortie').length, dureeTotale, heureDebut, heureFin, JSON.stringify(actions), JSON.stringify(statsJson)]);
     }
 
-    // ✅ heure_validation = heure téléphone
     const [existeDecons] = await db.query('SELECT id FROM deconsignation_metier WHERE demande_id=? AND type_metier=?',[demande_id, chef.type_metier]);
     if (existeDecons.length) {
       await db.query(`UPDATE deconsignation_metier SET chef_equipe_id=?, statut='valide', heure_validation=?, pdf_path=? WHERE demande_id=? AND type_metier=?`,[chef_id, dt, pdfRelPath, demande_id, chef.type_metier]);
